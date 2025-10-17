@@ -838,10 +838,16 @@ export function SceneNodeThreeObject(props: { name: string }) {
       // If no visibility is found: we assume it's invisible. This will hide
       // scene nodes until we receive a visibility update, which always happens
       // after creation.
-      const visibility =
+      let visibility =
         (node?.overrideVisibility === undefined
           ? node?.visibility
           : node.overrideVisibility) ?? false;
+
+      // Hide /cam_axes by default
+      if (props.name === '/cam_axes' && node?.overrideVisibility === undefined) {
+        visibility = false;
+      }
+
       objRef.current.visible = visibility;
 
       if (node.poseUpdateState == "needsUpdate") {

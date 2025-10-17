@@ -1,10 +1,10 @@
-import { Line } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import React from "react";
 import { HoverableContext } from "./HoverContext";
 import * as THREE from "three";
 import { CameraFrustumMessage } from "./WebsocketMessages";
 import { rgbToInt } from "./mesh/MeshUtils";
+import { Line } from "./Line";
 
 /** Helper for visualizing camera frustums. */
 export const CameraFrustumComponent = React.forwardRef<
@@ -23,25 +23,59 @@ export const CameraFrustumComponent = React.forwardRef<
         }),
       );
       new THREE.TextureLoader().load(image_url, (texture) => {
-        setImageTexture(texture);
+        setImageTexture((prevTexture) => {
+          // Dispose of the previous texture to free GPU memory
+          if (prevTexture) {
+            prevTexture.dispose();
+          }
+          return texture;
+        });
         URL.revokeObjectURL(image_url);
       });
     } else {
-      setImageTexture(undefined);
+      setImageTexture((prevTexture) => {
+        // Dispose of the previous texture when clearing
+        if (prevTexture) {
+          prevTexture.dispose();
+        }
+        return undefined;
+      });
     }
   }, [message.props._format, message.props._image_data]);
 
-  let y = Math.tan(message.props.fov / 2.0);
-  let x = y * message.props.aspect;
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      if (imageTexture) {
+        imageTexture.dispose();
+      }
+    };
+  }, [imageTexture]);
+
+  // Validate props to prevent NaN values
+  const fov = isFinite(message.props.fov) && message.props.fov > 0 ? message.props.fov : Math.PI / 4;
+  const aspect = isFinite(message.props.aspect) && message.props.aspect > 0 ? message.props.aspect : 1.0;
+  const scale = isFinite(message.props.scale) && message.props.scale > 0 ? message.props.scale : 1.0;
+
+  let y = Math.tan(fov / 2.0);
+  let x = y * aspect;
   let z = 1.0;
 
   const volumeScale = Math.cbrt((x * y * z) / 3.0);
   x /= volumeScale;
   y /= volumeScale;
   z /= volumeScale;
-  x *= message.props.scale;
-  y *= message.props.scale;
-  z *= message.props.scale;
+  x *= scale;
+  y *= scale;
+  z *= scale;
+
+  // Final validation: ensure all calculated values are finite
+  if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+    console.warn('Camera frustum has invalid dimensions, using defaults', { x, y, z, fov, aspect, scale });
+    x = 1.0;
+    y = 1.0;
+    z = 1.0;
+  }
 
   const hoverContext = React.useContext(HoverableContext);
   const [isHovered, setIsHovered] = React.useState(false);
@@ -55,31 +89,42 @@ export const CameraFrustumComponent = React.forwardRef<
     }
   });
 
-  const frustumPoints: [number, number, number][] = [
-    // Rectangle.
-    [-1, -1, 1],
-    [1, -1, 1],
-    [1, -1, 1],
-    [1, 1, 1],
-    [1, 1, 1],
-    [-1, 1, 1],
-    [-1, 1, 1],
-    [-1, -1, 1],
-    // Lines to origin.
-    [-1, -1, 1],
-    [0, 0, 0],
-    [0, 0, 0],
-    [1, -1, 1],
-    // Lines to origin.
-    [-1, 1, 1],
-    [0, 0, 0],
-    [0, 0, 0],
-    [1, 1, 1],
-    // Up direction indicator.
-    // Don't overlap with the image if the image is present.
-    [0.0, -1.2, 1.0],
-    imageTexture === undefined ? [0.0, -0.9, 1.0] : [0.0, -1.0, 1.0],
-  ].map((xyz) => [xyz[0] * x, xyz[1] * y, xyz[2] * z]);
+  const frustumPoints = React.useMemo(() => {
+    const points = [
+      // Rectangle.
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [1, 1, 1],
+      [-1, 1, 1],
+      [-1, 1, 1],
+      [-1, -1, 1],
+      // Lines to origin.
+      [-1, -1, 1],
+      [0, 0, 0],
+      [0, 0, 0],
+      [1, -1, 1],
+      // Lines to origin.
+      [-1, 1, 1],
+      [0, 0, 0],
+      [0, 0, 0],
+      [1, 1, 1],
+      // Up direction indicator.
+      // Don't overlap with the image if the image is present.
+      [0.0, -1.2, 1.0],
+      imageTexture === undefined ? [0.0, -0.9, 1.0] : [0.0, -1.0, 1.0],
+    ];
+
+    // Convert to Float32Array for the Line component
+    const scaledPoints = new Float32Array(points.length * 3);
+    for (let i = 0; i < points.length; i++) {
+      scaledPoints[i * 3] = points[i][0] * x;
+      scaledPoints[i * 3 + 1] = points[i][1] * y;
+      scaledPoints[i * 3 + 2] = points[i][2] * z;
+    }
+    return scaledPoints;
+  }, [x, y, z, imageTexture]);
 
   // Create geometry for filled variant
   const geometry = React.useMemo(() => {
@@ -122,6 +167,15 @@ export const CameraFrustumComponent = React.forwardRef<
 
     return geom;
   }, [x, y, z, message.props.variant]);
+
+  // Cleanup geometry on change or unmount
+  React.useEffect(() => {
+    return () => {
+      if (geometry) {
+        geometry.dispose();
+      }
+    };
+  }, [geometry]);
 
   const color = new THREE.Color().setRGB(
     message.props.color[0] / 255,

@@ -8,11 +8,13 @@ import {
   ActionIcon,
   NumberInput,
   Paper,
-  Progress,
   Select,
   Slider,
   Tooltip,
   useMantineTheme,
+  SegmentedControl,
+  Loader,
+  Text,
 } from "@mantine/core";
 import {
   IconPlayerPauseFilled,
@@ -84,6 +86,21 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
   const [paused, setPaused] = useState(false);
   const [recording, setRecording] = useState<SerializedMessages | null>(null);
 
+  // Read robot view position from URL parameter (defaults to "top")
+  const searchParams = new URLSearchParams(window.location.search);
+  const robotViewPosition = searchParams.get("robotViewPosition") === "bottom" ? "bottom" : "top";
+
+  // Segmented control for terrain vs gaussian splats (defaults to splats)
+  const [visualizationMode, setVisualizationMode] = useState<"Mesh" | "Gaussian Splats">("Gaussian Splats");
+
+  // Additional visibility for other scene nodes (not currently user-controllable)
+  const showLinkHeights = false;
+  const showCamera = true;
+
+  // Track the current camera image for the top-left display
+  const [cameraImageUrl, setCameraImageUrl] = useState<string | null>(null);
+  const previousImageDataRef = useRef<Uint8Array | null>(null);
+
   // Instead of removing all of the existing scene nodes, we're just going to hide them.
   // This will prevent unnecessary remounting when messages are looped.
   function resetScene() {
@@ -99,8 +116,13 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
         // ^ We don't hide intermediate frames. These can be created
         // automatically by addSceneNodeMakerParents(), in which case there
         // will be no message to un-hide them.
+
+        // Don't set visibility for tracked nodes - let the toggle override handle it
+        const trackedNodes = ["/terrain", "/gs", "/link_heights", "/cam"];
+        const isTrackedNode = trackedNodes.includes(key);
+
         viewer.sceneTreeActions.updateNodeAttributes(key, {
-          visibility: false,
+          visibility: isTrackedNode ? undefined : false,
           wxyz: [1, 0, 0, 0],
           position: [0, 0, 0],
         });
@@ -117,6 +139,93 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
   const [currentTime, setCurrentTime] = useState(0.0);
 
   const theme = useMantineTheme();
+
+  // Apply visibility overrides when visualization mode or toggles are updated
+  // Using overrideVisibility ensures messages don't override our toggle state
+  useEffect(() => {
+    if (recording === null) return;
+
+    // Handle mutually exclusive terrain vs gaussian splats
+    const showTerrain = visualizationMode === "Mesh";
+    const showGaussianSplats = visualizationMode === "Gaussian Splats";
+
+    // Update all tracked nodes
+    const visibilityMap = {
+      "/terrain": showTerrain,
+      "/gs": showGaussianSplats,
+      "/link_heights": showLinkHeights,
+      "/cam": showCamera,
+    };
+
+    Object.entries(visibilityMap).forEach(([nodeName, visible]) => {
+      const node = viewer.useSceneTree.getState()[nodeName];
+      if (node !== undefined) {
+        viewer.sceneTreeActions.updateNodeAttributes(nodeName, {
+          overrideVisibility: visible, // true = visible, false = hidden
+        });
+      }
+    });
+  }, [visualizationMode, showLinkHeights, showCamera, viewer, recording]);
+
+  // Monitor the /cam node for image updates and sync to the top-left display
+  // Use a throttled approach: only check for updates periodically, not on every state change
+  useEffect(() => {
+    if (recording === null) return;
+
+    const updateCameraImage = () => {
+      const camNode = viewer.useSceneTree.getState()["/cam"];
+      if (camNode?.message?.type === "CameraFrustumMessage") {
+        const message = camNode.message;
+        if (message.props._format !== null && message.props._image_data !== null) {
+          const imageData = message.props._image_data;
+          const format = message.props._format;
+
+          // Only create a new blob URL if the image data has actually changed
+          if (previousImageDataRef.current !== imageData) {
+            previousImageDataRef.current = imageData;
+
+            // Clean up the previous URL to prevent memory leaks
+            setCameraImageUrl((prevUrl) => {
+              if (prevUrl) {
+                URL.revokeObjectURL(prevUrl);
+              }
+              // Create a new blob URL from the image data
+              const newUrl = URL.createObjectURL(
+                new Blob([imageData], {
+                  type: "image/" + format,
+                }),
+              );
+              return newUrl;
+            });
+          }
+        } else {
+          // Clear the image if no data
+          if (previousImageDataRef.current !== null) {
+            previousImageDataRef.current = null;
+            setCameraImageUrl((prevUrl) => {
+              if (prevUrl) {
+                URL.revokeObjectURL(prevUrl);
+              }
+              return null;
+            });
+          }
+        }
+      }
+    };
+
+    // Update camera image at most 10 times per second instead of 120
+    const interval = setInterval(updateCameraImage, 100);
+    return () => clearInterval(interval);
+  }, [viewer, recording]);
+
+  // Cleanup camera image URL on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraImageUrl) {
+        URL.revokeObjectURL(cameraImageUrl);
+      }
+    };
+  }, [cameraImageUrl]);
 
   useEffect(() => {
     deserializeGzippedMsgpackFile<SerializedMessages>(fileUrl, setStatus).then(
@@ -153,12 +262,31 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
       viewerMutable.messageQueue.push(message);
     }
 
+    // Apply visibility overrides after processing messages
+    // This ensures the correct visibility is set even on initial load
+    const showTerrain = visualizationMode === "Mesh";
+    const showGaussianSplats = visualizationMode === "Gaussian Splats";
+    const visibilityMap = {
+      "/terrain": showTerrain,
+      "/gs": showGaussianSplats,
+      "/link_heights": showLinkHeights,
+      "/cam": showCamera,
+    };
+    Object.entries(visibilityMap).forEach(([nodeName, visible]) => {
+      const node = viewer.useSceneTree.getState()[nodeName];
+      if (node !== undefined) {
+        viewer.sceneTreeActions.updateNodeAttributes(nodeName, {
+          overrideVisibility: visible,
+        });
+      }
+    });
+
     if (mutable.currentTime >= recording.durationSeconds) {
       mutable.currentIndex = 0;
       mutable.currentTime = recording.messages[0][0];
     }
     setCurrentTime(mutable.currentTime);
-  }, [recording]);
+  }, [recording, visualizationMode, showLinkHeights, showCamera, viewer]);
 
   useEffect(() => {
     const playbackMultiplier = parseFloat(playbackSpeed); // '0.5x' -> 0.5
@@ -218,6 +346,10 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
   );
 
   if (recording === null) {
+    const loadingPercent = status.total > 0
+      ? Math.round((status.downloaded / status.total) * 100)
+      : 0;
+
     return (
       <div
         style={{
@@ -228,35 +360,73 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
           left: 0,
           right: 0,
           backgroundColor: darkMode ? theme.colors.dark[9] : "#fff",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "1.5rem",
         }}
       >
-        <Progress
-          value={(status.downloaded / status.total) * 100.0}
-          radius={0}
-          transitionDuration={0}
-        />
+        <Loader size="xl" color={darkMode ? "blue" : "blue"} />
+        <Text
+          size="lg"
+          fw={500}
+          c={darkMode ? theme.colors.gray[4] : theme.colors.gray[7]}
+        >
+          Loading scene... {loadingPercent}%
+        </Text>
       </div>
     );
   } else {
     return (
-      <Paper
-        radius="xs"
-        shadow="0.1em 0 1em 0 rgba(0,0,0,0.1)"
-        style={{
-          position: "fixed",
-          bottom: "1em",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: "25em",
-          maxWidth: "95%",
-          zIndex: 1,
-          padding: "0.5em",
-          display: recording.durationSeconds === 0.0 ? "none" : "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "0.375em",
-        }}
-      >
+      <>
+        {/* Camera image display - position based on robotViewPosition parameter */}
+        {cameraImageUrl && (
+          <Paper
+            radius="xs"
+            shadow="0.1em 0 1em 0 rgba(0,0,0,0.1)"
+            style={{
+              position: "fixed",
+              ...(robotViewPosition === "bottom"
+                ? { bottom: "6em", right: "1em" }
+                : { top: "1em", left: "1em" }),
+              zIndex: 1,
+              padding: "0.5em",
+              backgroundColor: darkMode ? theme.colors.dark[7] : "#fff",
+            }}
+          >
+            <img
+              src={cameraImageUrl}
+              alt="Camera view"
+              style={{
+                display: "block",
+                maxWidth: "320px",
+                maxHeight: "240px",
+                width: "auto",
+                height: "auto",
+              }}
+            />
+          </Paper>
+        )}
+        {/* Playback controls */}
+        <Paper
+          radius="xs"
+          shadow="0.1em 0 1em 0 rgba(0,0,0,0.1)"
+          style={{
+            position: "fixed",
+            bottom: "1em",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "25em",
+            maxWidth: "95%",
+            zIndex: 1,
+            padding: "0.5em",
+            display: recording.durationSeconds === 0.0 ? "none" : "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.375em",
+          }}
+        >
         <ActionIcon
           size="md"
           variant="subtle"
@@ -268,6 +438,15 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
             <IconPlayerPauseFilled height="1.125em" width="1.125em" />
           )}
         </ActionIcon>
+        <SegmentedControl
+          size="xs"
+          value={visualizationMode}
+          onChange={(value) => setVisualizationMode(value as "Mesh" | "Gaussian Splats")}
+          data={["Mesh", "Gaussian Splats"]}
+          styles={{
+            root: { flexShrink: 0 },
+          }}
+        />
         <NumberInput
           size="xs"
           hideControls
@@ -314,6 +493,7 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
           />
         </Tooltip>
       </Paper>
+      </>
     );
   }
 }

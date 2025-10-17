@@ -1,0 +1,17 @@
+I am making a website for this project which requires embedding viser visualizations.
+Specifically, I am embedding dynamic scenes according to the instructions in `https://viser.studio/main/embedded_visualizations/#dynamic-scene-export`.
+
+However, I want to modify the embedded visualization to fit the code I have in @gauss_gym/utils/viser_visualizer.py. Specifically, I have a few values I want the user to have the ability to toggle in the viewer, namely:
+
+- /terrain (the terrain mesh)
+- /gs (the gaussian splats)
+- /link_heights (visualizes the foot height above the terrain)
+- /cam (the camera frustrum with overlaid image)
+
+There should be toggles for each of these properties. By default, only /terrain and /cam should be active. 
+
+A similar yet slightly outdated repo is https://github.com/robot-see-robot-do/viser, which added a toggle to their embedded visualizations as well. This can serve as reference.
+
+Also, to further clarify: I don't want to modify the python visualizer, I want to modify the JS visualizations that get exported as a result of `viser-build-client`.
+
+Additionally, modify the code in viser/ which is in this directory.

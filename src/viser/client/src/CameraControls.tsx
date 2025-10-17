@@ -390,7 +390,8 @@ export function SynchronizedCameraControls() {
           )},${lookAt.z.toFixed(3)}` +
           `&initialCameraUp=${up.x.toFixed(3)},${up.y.toFixed(
             3,
-          )},${up.z.toFixed(3)}`,
+          )},${up.z.toFixed(3)}` +
+          `&initialFov=${three_camera.fov.toFixed(1)}`,
       );
     }
   }, [camera, sendCameraThrottled]);
@@ -402,6 +403,7 @@ export function SynchronizedCameraControls() {
   const initialCameraPosString = searchParams.get("initialCameraPosition");
   const initialCameraLookAtString = searchParams.get("initialCameraLookAt");
   const initialCameraUpString = searchParams.get("initialCameraUp");
+  const initialFovString = searchParams.get("initialFov");
   const forceOrbitOriginTool = searchParams.get("forceOrbitOriginTool") === "1";
   const logCamera = viewer.useDevSettings((state) => state.logCamera);
 
@@ -455,6 +457,16 @@ export function SynchronizedCameraControls() {
         initialCameraLookAt.z,
         false,
       );
+
+      // Set initial FOV if provided (in degrees)
+      if (initialFovString) {
+        const fovDegrees = parseFloat(initialFovString);
+        if (!isNaN(fovDegrees) && fovDegrees > 0 && fovDegrees < 180) {
+          camera.fov = fovDegrees;
+          camera.updateProjectionMatrix();
+        }
+      }
+
       initialCameraPositionSet.current = true;
     }
 
@@ -565,7 +577,6 @@ export function SynchronizedCameraControls() {
       <CameraControls
         ref={(controls) => (viewerMutable.cameraControl = controls)}
         minDistance={0.01}
-        dollySpeed={0.3}
         smoothTime={0.05}
         draggingSmoothTime={0.0}
         onChange={sendCamera}

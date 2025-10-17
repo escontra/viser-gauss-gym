@@ -52,8 +52,24 @@ export const Line: ForwardRefComponent<LineProps, Line2 | LineSegments2> =
       const lineGeom = React.useMemo(() => {
         const geom = segments ? new LineSegmentsGeometry() : new LineGeometry();
 
-        // points is already a Float32Array of [x,y,z] values
-        geom.setPositions(points);
+        // Validate that points array doesn't contain NaN values
+        let hasNaN = false;
+        for (let i = 0; i < points.length; i++) {
+          if (!isFinite(points[i])) {
+            hasNaN = true;
+            break;
+          }
+        }
+
+        if (hasNaN) {
+          console.warn('Line component received NaN or Infinity values in points array:', points);
+          // Create a safe fallback: a small line at origin
+          const safePoints = new Float32Array([0, 0, 0, 0, 0, 0.001]);
+          geom.setPositions(safePoints);
+        } else {
+          // points is already a Float32Array of [x,y,z] values
+          geom.setPositions(points);
+        }
 
         if (vertexColors) {
           // Convert Uint8Array (0-255) to Float32Array (0-1)
