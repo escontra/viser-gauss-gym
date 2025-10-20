@@ -101,6 +101,14 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
   const [cameraImageUrl, setCameraImageUrl] = useState<string | null>(null);
   const previousImageDataRef = useRef<Uint8Array | null>(null);
 
+  // Track if we're on mobile for responsive sizing
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Instead of removing all of the existing scene nodes, we're just going to hide them.
   // This will prevent unnecessary remounting when messages are looped.
   function resetScene() {
@@ -393,6 +401,7 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
               zIndex: 1,
               padding: "0.5em",
               backgroundColor: darkMode ? theme.colors.dark[7] : "#fff",
+              maxWidth: isMobile ? "calc(50vw + 1em)" : "none",
             }}
           >
             <img
@@ -400,8 +409,8 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
               alt="Camera view"
               style={{
                 display: "block",
-                maxWidth: "320px",
-                maxHeight: "240px",
+                maxWidth: isMobile ? "50vw" : "320px",
+                maxHeight: isMobile ? "37.5vw" : "240px",
                 width: "auto",
                 height: "auto",
               }}
